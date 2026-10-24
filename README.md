@@ -2,6 +2,7 @@
 
 一款可在 Windows 7 SP1 上运行的四人拖拉机（升级）桌面游戏，使用 Electron 22.3.27 构建。
 牌型规则与大小判定对齐原版程序，内置三名电脑玩家，可配置 1~4 副牌。
+<img width="2417" height="1590" alt="image" src="https://github.com/user-attachments/assets/45d34e4e-6d10-4dab-825d-c0c30a4eb6ef" />
 
 ## 特性
 
