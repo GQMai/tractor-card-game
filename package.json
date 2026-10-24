@@ -1,0 +1,15 @@
+{
+  "name": "tractor-win7",
+  "version": "1.0.0",
+  "private": true,
+  "description": "阿春拖拉机 · 现代重制版（Windows 7 可运行）",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "test": "node test/engine-test.js",
+    "dist": "powershell -ExecutionPolicy Bypass -File build-portable.ps1"
+  },
+  "devDependencies": {
+    "electron": "22.3.27"
+  }
+}
