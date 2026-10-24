@@ -306,10 +306,16 @@ ok(E.cardName(53) === '大王' && E.cardName(0) === '♦2', '牌名');
   ok(g.declareCards.length === 2 && g.declareCards.every(c => c === 29),
      '亮主记录用的牌（供出牌区展示）');
   ok(!g.declare(1, 2).ok, '张数不足不能反主');
-  // 王牌无主
+  // 王牌无主：必须两张相同的王，大小王混搭不算一对
   const g2 = new E.Game({ decks: 2, rng: E.mulberry32(5) }).startRound();
   g2.hands[2] = [52, 53];
-  ok(g2.declare(2, 4).ok, '双王可亮无主');
+  ok(!g2.declare(2, 4).ok, '大小王混搭不能亮无主');
+  g2.hands[2] = [52, 52];
+  ok(g2.declare(2, 4).ok, '两张小王可亮无主');
+  g2.hands[3] = [52, 52, 52, 53];
+  ok(g2.declare(3, 4).ok, '三张相同的小王可反主');
+  ok(g2.declareCards.length === 3 && g2.declareCards.every(function (c) { return c === 52; }),
+     '混搭的大王不计入亮主牌');
 }
 
 // 7a. 亮主/反主层级：张数优先，同张数王牌 > 级牌，大王 > 小王
@@ -633,6 +639,24 @@ function scaffold(hands, ctx, opts) {
   g.seen[DA] = 1;
   pick = E.aiChoose(g, 3);
   ok(pick.length === 1 && pick[0] === D10, '自己赢面大时顺带甩分，实际 ' + pick.map(E.cardName));
+}
+
+// 7b10. 终局缺门零分墩：垫最便宜的散主，保住对子和小王（打 7：对9 + 主7 + 副7 + 小王）
+{
+  const ctx = E.makeContext(2, 7, 0); // 红桃主，级牌 7
+  const H9 = 33, H7 = 31, D7 = 5, SMALL = 52;
+  const S4 = 41, S5 = 42, S6 = 43;
+
+  // 我先出 ♠4♠4，东家两张散牌压不住，队友全主缺门
+  const g = scaffold([[], [S5, S6, 20, 21, 22], [H9, H9, H7, D7, SMALL], [23, 24, 25, 30, 40]], ctx,
+                     { trick: [{ seat: 0, cards: [S4, S4] }, { seat: 1, cards: [S5, S6] }],
+                       lead: E.validateLead([S4, S4], ctx).lead, leader: 0, turn: 2 });
+  const pick = E.aiChoose(g, 2);
+  const sorted = pick.slice().sort(function (a, b) { return a - b; });
+  ok(sorted.length === 2 && sorted[0] === D7 && sorted[1] === H7,
+     '零分墩缺门应垫主7+副7，保住对9和小王，实际 ' + pick.map(E.cardName));
+  ok(pick.indexOf(SMALL) < 0, '不应浪费小王');
+  ok(pick.indexOf(H9) < 0, '不应拆对9');
 }
 
 // 7b3. 主牌大小：大王 > 小王 > 主级牌 > 副级牌 > A > K ...

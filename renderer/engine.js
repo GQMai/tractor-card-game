@@ -1092,6 +1092,15 @@
       out.push(buildFollowPlan(trumps, lead, ctx, false));
       out.push(buildFollowPlan(trumps, lead, ctx, true));
       push(trumps.slice().sort(function (a, b) { return orderOf(ctx, a) - orderOf(ctx, b); }).slice(0, n));
+      // 缺门只能垫主牌时，优先垫最便宜的散主：
+      // 对子/三条是后面单独赢墩、抢出牌权的本钱，不能为了跟一手零分牌就拆掉
+      var tu = decompose(trumps, ctx);
+      var looseT = [];
+      for (var ti = 0; ti < tu.length; ti++) {
+        if (tu[ti].cards.length === 1) looseT.push(tu[ti].cards[0]);
+      }
+      looseT.sort(function (a, b) { return cardValue(ctx, a) - cardValue(ctx, b); });
+      if (looseT.length >= n) push(looseT.slice(0, n));
     }
 
     // 垫牌：同一门里挑最低的非分牌，便于做出缺门
@@ -1575,12 +1584,20 @@
     this.declarer = seat;
     // 记录亮主用的牌（级牌或王），界面据此在出牌区展示
     var hand = this.hands[seat], used = [];
-    for (var i = 0; i < hand.length; i++) {
-      var c = hand[i];
-      if (suit === 4) {
-        if (isJoker(c)) used.push(c);
-      } else if (!isJoker(c) && suitOf(c) === suit && rankOf(c) === this.level) {
-        used.push(c);
+    if (suit === 4) {
+      // 只记录成对的那一种王（大王优先），混搭的王不参与亮主
+      var bigs = [], smalls = [];
+      for (var i = 0; i < hand.length; i++) {
+        if (hand[i] === JOKER_BIG) bigs.push(hand[i]);
+        else if (hand[i] === JOKER_SMALL) smalls.push(hand[i]);
+      }
+      used = bigs.length >= 2 ? bigs : smalls;
+    } else {
+      for (var i = 0; i < hand.length; i++) {
+        var c = hand[i];
+        if (!isJoker(c) && suitOf(c) === suit && rankOf(c) === this.level) {
+          used.push(c);
+        }
       }
     }
     this.declareCards = used;
@@ -1605,8 +1622,10 @@
         if (hand[j] === JOKER_SMALL) small++;
         else if (hand[j] === JOKER_BIG) big++;
       }
-      count = small + big;
-      if (count < 2) return { ok: false, count: count, rank: 0, msg: '无主需要至少两张王' };
+      // 无主必须用两张相同的王：大王+大王 或 小王+小王，大小王混搭不成对
+      var same = Math.max(small, big);
+      if (same < 2) return { ok: false, count: same, rank: 0, msg: '无主要两张相同的王（两张大/两张小王）' };
+      count = same;
       tier = big >= 2 ? 2 : 1;
     } else {
       count = hand.filter(function (c) {

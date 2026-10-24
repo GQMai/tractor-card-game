@@ -226,6 +226,23 @@ button {
 .seat-meta { display: flex; flex-direction: column; line-height: 1.25; }
 .seat-meta b { font-size: 13px; }
 .seat-meta span { font-size: 10px; color: var(--muted); }
+/* 座位关键身份：庄家 / 亮主 */
+.seat-tags { display: inline-flex; align-items: center; gap: 4px; }
+.seat-tags:empty { display: none; }
+.seat-tag {
+  font-size: 11px;
+  line-height: 16px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.seat-tag.banker { background: var(--gold); color: #1c1405; }
+.seat-tag.declarer {
+  color: var(--gold);
+  background: rgba(217, 185, 106, 0.14);
+  border: 1px solid var(--gold-soft);
+}
 .card-count {
   min-width: 34px;
   text-align: center;
@@ -393,6 +410,8 @@ button {
   padding: 0 6px;
 }
 #handHint {
+  flex: 0 1 auto;
+  min-width: 0;
   max-width: 100%;
   font-size: 13px;
   line-height: 15px;
@@ -401,6 +420,7 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.hand-status { display: flex; align-items: center; gap: 6px; max-width: 100%; }
 .hand-buttons { display: flex; gap: 10px; }
 .action {
   height: 38px;

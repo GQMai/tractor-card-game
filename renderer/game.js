@@ -160,9 +160,29 @@
     $('#scoreFill').style.width = pct + '%';
   }
 
+  // 座位身份标记：谁坐庄、谁亮主（含主牌花色）
+  var lastTags = {};
+  function seatTags(seat) {
+    var g = state.game, html = '';
+    if (!g) return html;
+    if (g.bankerSeat === seat) html += '<span class="seat-tag banker">庄</span>';
+    if (g.declarer === seat && g.trumpSuit != null) {
+      html += '<span class="seat-tag declarer">亮' +
+        (g.trumpSuit === 4 ? '无主' : E.SUIT_LABEL[g.trumpSuit]) + '</span>';
+    }
+    return html;
+  }
+
   function renderSeats() {
     var g = state.game;
     if (!g) return;
+    for (var s = 0; s <= 3; s++) {
+      var html2 = seatTags(s);
+      if (lastTags[s] !== html2) {
+        lastTags[s] = html2;
+        $('#tags' + s).innerHTML = html2;
+      }
+    }
     for (var s = 1; s <= 3; s++) {
       var el = $('#seat' + s);
       var n = g.hands[s].length;

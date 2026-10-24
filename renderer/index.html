@@ -56,6 +56,7 @@
       <div class="seat-head">
         <span class="avatar team-a">北</span>
         <div class="seat-meta"><b>北家</b><span>队友</span></div>
+        <span class="seat-tags" id="tags2"></span>
         <span class="card-count" id="count2">0</span>
       </div>
       <div class="seat-cards" id="cards2"></div>
@@ -65,6 +66,7 @@
       <div class="seat-head">
         <span class="avatar team-b">西</span>
         <div class="seat-meta"><b>西家</b><span>对手</span></div>
+        <span class="seat-tags" id="tags3"></span>
         <span class="card-count" id="count3">0</span>
       </div>
       <div class="seat-cards" id="cards3"></div>
@@ -74,6 +76,7 @@
       <div class="seat-head">
         <span class="avatar team-b">东</span>
         <div class="seat-meta"><b>东家</b><span>对手</span></div>
+        <span class="seat-tags" id="tags1"></span>
         <span class="card-count" id="count1">0</span>
       </div>
       <div class="seat-cards" id="cards1"></div>
@@ -93,7 +96,10 @@
 
     <div id="handZone">
       <div id="handBar">
-        <div id="handHint">等待发牌…</div>
+        <div class="hand-status">
+          <span class="seat-tags" id="tags0"></span>
+          <div id="handHint">等待发牌…</div>
+        </div>
         <div class="hand-buttons">
           <button class="action ghost" id="btnClear">重选</button>
           <button class="action ghost" id="btnHint">提示</button>
