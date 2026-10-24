@@ -210,6 +210,9 @@
     if (units.length === 1) {
       return { ok: true, lead: { cards: cards.slice(), group: g, units: units } };
     }
+    // 甩牌只看决定这一墩归属的那一段（最大的结构），与收墩时的判定保持一致：
+    // 其余小牌即使被更大的单牌盖过，也改变不了这一墩的归属，不该因此否决整手
+    var key = leadKeyUnit(units);
     if (unseen && unseen.length) {
       var hands = Array.isArray(unseen[0]) ? unseen : [unseen];
       for (var h = 0; h < hands.length; h++) {
@@ -222,27 +225,24 @@
         var trumps = canRuff ? decompose(hands[h].filter(function (c) {
           return groupOf(ctx, c) === 4;
         }), ctx) : [];
-        for (var u = 0; u < units.length; u++) {
-          var unit = units[u];
-          for (var t = 0; t < theirs.length; t++) {
-            var o = theirs[t];
-            if (o.len >= unit.len && o.copies >= unit.copies && o.start > unit.start) {
-              return {
-                ok: false,
-                msg: '甩牌不成立：其他家还有更大的' + unitName(unit) +
-                     '，请改出这门最小的牌'
-              };
-            }
+        for (var t = 0; t < theirs.length; t++) {
+          var o = theirs[t];
+          if (o.copies === key.copies && o.len >= key.len && o.start > key.start) {
+            return {
+              ok: false,
+              msg: '甩牌不成立：其他家还有更大的' + unitName(key) +
+                   '，请改出这门最小的牌'
+            };
           }
-          // 副牌甩牌还可能被主牌毙掉，结构对得上就不保险
-          for (var r = 0; r < trumps.length; r++) {
-            if (trumps[r].copies >= unit.copies && trumps[r].len >= unit.len) {
-              return {
-                ok: false,
-                msg: '甩牌不成立：其他家可能用主牌毙掉' + unitName(unit) +
-                     '，请改出这门最小的牌'
-              };
-            }
+        }
+        // 副牌甩牌还可能被主牌毙掉，主牌结构对得上就不保险
+        for (var r = 0; r < trumps.length; r++) {
+          if (trumps[r].copies === key.copies && trumps[r].len >= key.len) {
+            return {
+              ok: false,
+              msg: '甩牌不成立：其他家可能用主牌毙掉' + unitName(key) +
+                   '，请改出这门最小的牌'
+            };
           }
         }
       }
