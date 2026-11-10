@@ -4,3 +4,12 @@ dist/
 tmp-*.js
 .DS_Store
 Thumbs.db
+
+# 语音配置与本地记忆：可能含密钥或私人对话，禁止入库
+voice-config.json
+voice-config.*.json
+!voice-config.example.json
+voice-memory/
+outputs/
+*.pcm
+*.wav

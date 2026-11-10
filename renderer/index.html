@@ -46,11 +46,17 @@
       <button class="pill" id="btnNew">新局</button>
       <button class="pill" id="btnRules">规则</button>
       <button class="pill" id="btnSound">音效：开</button>
+      <button class="pill" id="btnVoice">语音：关</button>
     </div>
   </header>
 
   <main id="table">
     <div class="felt"></div>
+
+    <div id="voiceBar" class="hidden">
+      <div id="voiceState">语音待机</div>
+      <div id="voiceLine"></div>
+    </div>
 
     <div class="seat seat-top" id="seat2">
       <div class="seat-head">
@@ -122,5 +128,7 @@
 </div>
 <script src="engine.js"></script>
 <script src="game.js"></script>
+<script src="voice-ui.js"></script>
+<script src="reminder.js"></script>
 </body>
 </html>

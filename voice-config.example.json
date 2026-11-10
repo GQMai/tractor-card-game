@@ -1,0 +1,30 @@
+{
+  "_说明": "把本文件复制到 %APPDATA%\\tractor-win7\\voice-config.json 后填入 apiKey；不要提交到仓库。apiKey 在火山引擎控制台的 API Key 管理生成，且需开通「语音识别大模型」后才能用于级联方案。",
+  "apiKey": "",
+  "url": "wss://openspeech.bytedance.com/api/v3/duplex/realtime/dialogue",
+  "model": "1.2.6.1",
+  "speaker": "zh_female_vv_uranus_bigtts",
+  "dialect": null,
+  "speed": -10,
+  "loudness": 0,
+  "endSmoothWindowMs": 1200,
+  "botName": "阿春",
+  "instructions": "你是一位陪老人聊天的伙伴，语气亲切、有耐心。每次只说一两句话，语速慢，不要长篇大论，多听老人讲。",
+  "asr": {
+    "url": "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async",
+    "resourceId": "volc.seedasr.sauc.duration",
+    "modelName": "bigmodel",
+    "endWindowSize": 800
+  },
+  "llm": {
+    "baseUrl": "https://api.deepseek.com",
+    "model": "deepseek-chat",
+    "apiKey": ""
+  },
+  "tts": {
+    "voice": "zh-HK-HiuMaanNeural",
+    "rate": "-10%"
+  },
+  "vad": { "threshold": 900, "loudMs": 300 },
+  "cascadePersona": "你係一位陪老人家傾偈嘅伙伴，講香港粵語口語，語氣親切、有耐性。每次只講一兩句，句子要短，多用「啦、囉、㗎、喎、喇」等語氣詞，唔好講書面語，唔好講長篇大論，多啲聽老人講。"
+}
