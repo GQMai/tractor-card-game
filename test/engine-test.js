@@ -98,6 +98,49 @@ ok(E.cardName(53) === '大王' && E.cardName(0) === '♦2', '牌名');
   ok(E.validateFollow(hand, [4, 4, 5, 5], leadTractor, ctx).ok, '跟出同长度拖拉机');
 }
 
+// 5b2. 级牌不在副牌序列里：打 5 时 ♦4♦4♦6♦6 是拖拉机
+{
+  const ctx = E.makeContext(2, 5, 0); // ♥主，级牌 5
+  const D4 = 2, D6 = 4, D7 = 5, D8 = 6;
+  const H4 = 28, H5 = 29, H6 = 30, HA = 38;
+
+  let u = E.decompose([D4, D4, D6, D6], ctx);
+  ok(u.length === 1 && u[0].len === 2 && u[0].copies === 2, '打5时 ♦4♦4♦6♦6 是拖拉机');
+  u = E.decompose([D4, D4, D7, D7], ctx);
+  ok(u.length === 2, '♦4♦4♦7♦7 中间隔着 5、6，不是拖拉机');
+
+  // 主牌里跨过主级牌同理
+  u = E.decompose([H4, H4, H6, H6], ctx);
+  ok(u.length === 1 && u[0].len === 2, '打5时 ♥4♥4♥6♥6 是主牌拖拉机');
+  // 主级牌排在 A 之上，和 A 相邻
+  u = E.decompose([HA, HA, H5, H5], ctx);
+  ok(u.length === 1 && u[0].len === 2, '主A 和主级牌相邻，能组成拖拉机');
+
+  // 出牌、压牌、跟牌都认这个结构
+  const leadTrac = E.validateLead([D4, D4, D6, D6], ctx).lead;
+  ok(!!leadTrac, '跨级拖拉机可以首出');
+  ok(E.trickWinner([
+    { seat: 0, cards: [D4, D4, D6, D6] },
+    { seat: 1, cards: [D6, D6, D7, D7] }
+  ], leadTrac, ctx) === 1, '更大的跨级拖拉机可以压');
+  const hand = [D4, D4, D6, D6, D8, D8];
+  ok(!E.validateFollow(hand, [D4, D4, D8, D8], leadTrac, ctx).ok,
+     '有跨级拖拉机不能拆成两个对子');
+  ok(E.validateFollow(hand, [D4, D4, D6, D6], leadTrac, ctx).ok, '跟出跨级拖拉机');
+}
+
+// 5c2. 甩主牌：要么每一段都是最大的，要么其他家一张主牌都没有
+{
+  const ctx = E.makeContext(2, 9, 0); // ♥主，级牌 9
+  const H2 = 26, H3 = 27, H4 = 28, H6 = 30, H7 = 31, H8 = 32, HK = 37, HA = 38;
+  ok(!E.validateLead([H6, H7, H8], ctx, [[HK]]).ok, '别人还有更大的主牌时不能甩主');
+  ok(E.validateLead([H6, H7, H8], ctx, [[H2, H3]]).ok, '三段都比别人的主牌大时可以甩主');
+  ok(E.validateLead([H2, H3, H4], ctx, [[2, 3, 4]]).ok, '别人一张主牌都没有时随便甩主');
+  // 决胜段是大对子，但夹着的小单张会被压：按全大规则不成立
+  ok(!E.validateLead([H2, H2, H3], ctx, [[H4]]).ok, '主牌甩牌里有一段不是最大就不成立');
+  ok(E.validateLead([HA, HA, HK], ctx, [[H6, H7]]).ok, '大对子加大单张可以甩主');
+}
+
 // 5c. 甩牌只看决胜段：小单张被盖过不影响这一墩，能甩就甩
 {
   const ctx = E.makeContext(2, 9, 0); // 主牌红桃
@@ -248,6 +291,30 @@ ok(E.cardName(53) === '大王' && E.cardName(0) === '♦2', '牌名');
                { trick: [{ seat: 0, cards: [D4, D4, D4, D4] }], lead: leadQuad, leader: 0, turn: 1 });
   pick = E.aiChoose(g, 1);
   ok(pick.length === 4 && E.validateFollow(g.hands[1], pick, leadQuad, ctx).ok, 'AI 跟四条张数与合法性');
+}
+
+// 5g2. 三副牌队友出三条：三条很罕见、牌力大，我方要敢于给分
+{
+  const ctx = E.makeContext(2, 9, 0); // 主红桃，座位 0 与 2 一队
+  const D2 = 0, D3 = 1, D4 = 2, D5 = 3, D6 = 4, D10 = 8;
+  const g = new E.Game({ decks: 3, rng: E.mulberry32(1) });
+  g.ctx = ctx; g.trumpSuit = ctx.trumpSuit; g.level = ctx.topLevel;
+  g.phase = 'play';
+  g.hands = [
+    [D10, D10, D10, D5, D5, D5, D2, D2, D2, D6, D6, D6, D4],
+    [11, 11, 11, 12, 12, 8, 8, 26, 26, 27, 27, 28],
+    [D3, D3, D3, 24, 24, 24, 23, 23, 39, 39],
+    [9, 9, 9, 25, 25, 26, 27, 28, 29, 30]
+  ];
+  g.trumpLeft = g.hands.map(h => h.filter(c => E.groupOf(ctx, c) === 4).length);
+  g.voids = [{}, {}, {}, {}]; g.seen = {};
+  g.trick = [{ seat: 2, cards: [D3, D3, D3] }];
+  g.lead = E.validateLead([D3, D3, D3], ctx).lead;
+  g.leader = 2; g.turn = 0; g.trickNo = 1; g.defenderPoints = 0;
+
+  const pick = E.aiChoose(g, 0);
+  ok(E.validateFollow(g.hands[0], pick, g.lead, ctx).ok, '三副牌跟三条合法');
+  ok(pick.reduce((s, c) => s + E.pointOf(c), 0) === 30, '队友三条当前最大时应跟出 30 分三条');
 }
 
 
@@ -665,6 +732,135 @@ function scaffold(hands, ctx, opts) {
      '零分墩缺门应垫主7+副7，保住对9和小王，实际 ' + pick.map(E.cardName));
   ok(pick.indexOf(SMALL) < 0, '不应浪费小王');
   ok(pick.indexOf(H9) < 0, '不应拆对9');
+}
+
+// 7b11. 缺门跟主优先散主；对手出拖拉机按“我方压不压得住”决定给不给分
+{
+  const ctx = E.makeContext(2, 9, 0); // ♥主，级牌 9
+  const D2 = 0, D4 = 2, D5 = 3, D6 = 4, D7 = 5, D8 = 6, D10 = 8, DJ = 9, DK = 11;
+  const H2 = 26, H3 = 27, H6 = 30;
+  const filler = [20, 21, 22, 23, 24];
+
+  // 全主缺门、对手出 ♦ 对子：不拆对 2，先垫最便宜的两张散主
+  const leadPair = E.validateLead([D2, D2], ctx).lead;
+  let g = scaffold([[D2, D2], [H2, H2, H3, H6, 31, 32, 34], filler, [40, 41, 42, 43]], ctx,
+                   { trick: [{ seat: 0, cards: [D2, D2] }], lead: leadPair, leader: 0, turn: 1 });
+  let pick = E.aiChoose(g, 1);
+  ok(pick.length === 2 && pick.indexOf(H2) < 0 && pick.every(c => E.groupOf(ctx, c) === 4),
+     '缺门跟主优先散主、不拆对子，实际 ' + pick.map(E.cardName));
+
+  // 对手出拖拉机（♦3♦3♦4♦4）、我方压不住：一分不给，只跟最小的没用牌
+  const leadTrac = E.validateLead([1, 1, 2, 2], ctx).lead;
+  g = scaffold([[1, 1, 2, 2], [D2, D4, D6, D8, D10, DJ], filler, [40, 41, 42, 43]], ctx,
+               { trick: [{ seat: 0, cards: [1, 1, 2, 2] }], lead: leadTrac, leader: 0, turn: 1 });
+  pick = E.aiChoose(g, 1);
+  ok(pick.length === 4 && pick.every(c => E.pointOf(c) === 0),
+     '对手拖拉机压不住时一分不给，实际 ' + pick.map(E.cardName));
+
+  // 队友用更大拖拉机压住后，跟牌时把分牌送出去
+  const partnerTrac = [D7, D7, D8, D8];
+  g = scaffold([[1, 1, 2, 2], partnerTrac, [D6, DJ, 10, 12],
+                [D2, D4, D5, D10, DK]], ctx,
+               { trick: [{ seat: 0, cards: [1, 1, 2, 2] },
+                         { seat: 1, cards: partnerTrac },
+                         { seat: 2, cards: [D6, DJ, 10, 12] }],
+                 lead: leadTrac, leader: 0, turn: 3 });
+  pick = E.aiChoose(g, 3);
+  ok(pick.length === 4 && pick.indexOf(D5) >= 0 && pick.indexOf(D10) >= 0 && pick.indexOf(DK) >= 0,
+     '队友拖拉机压住后尽量给分，实际 ' + pick.map(E.cardName));
+}
+
+// 7b12. 对手出拖拉机、自己缺门：垫最便宜的散主；再看队友能不能毙、毙了能不能压得住
+{
+  const ctx = E.makeContext(2, 9, 0); // ♥主，级牌 9
+  const H2 = 26, H3 = 27, H6 = 30, H8 = 32, H10 = 34;
+  const C2 = 13, C5 = 16, C6 = 17, C7 = 18, C8 = 19;
+  const leadTrac = E.validateLead([1, 1, 2, 2], ctx).lead; // ♦3♦3♦4♦4
+  const spades = [[40, 41, 42, 43], [44, 45, 46, 47]];
+  const trumpHand = [26, 27, 28, 29, 31, 33];   // 队友手里 6 张主牌
+
+  // 全主缺门：优先垫最便宜的散主，不拆对 2
+  let g = scaffold([[1, 1, 2, 2], [H2, H2, H3, H6, H8, H10], spades[0], spades[1]], ctx,
+                   { trick: [{ seat: 0, cards: [1, 1, 2, 2] }], lead: leadTrac, leader: 0, turn: 1 });
+  let pick = E.aiChoose(g, 1);
+  ok(pick.length === 4 && pick.indexOf(H2) < 0 && pick.every(c => E.groupOf(ctx, c) === 4),
+     '缺门跟拖拉机优先散主、不拆对子，实际 ' + pick.map(E.cardName));
+
+  // 队友已知缺 ♦ 且主牌有余量：把分牌垫给队友
+  g = scaffold([[1, 1, 2, 2], [C2, C5, C6, C7, C8], spades[0], trumpHand], ctx,
+               { trick: [{ seat: 0, cards: [1, 1, 2, 2] }], lead: leadTrac, leader: 0, turn: 1 });
+  g.voids[3][E.groupOf(ctx, 1)] = 1;
+  g.trumpLeft[3] = trumpHand.filter(c => E.groupOf(ctx, c) === 4).length;
+  pick = E.aiChoose(g, 1);
+  ok(pick.length === 4 && pick.indexOf(C5) >= 0,
+     '队友稳毙拖拉机时把分牌垫过去，实际 ' + pick.map(E.cardName));
+
+  // 队友缺 ♦ 但主牌只有刚够张数：凑不出同结构主牌，一分不给
+  g = scaffold([[1, 1, 2, 2], [C2, C5, C6, C7, C8], spades[0], trumpHand.slice(0, 4)], ctx,
+               { trick: [{ seat: 0, cards: [1, 1, 2, 2] }], lead: leadTrac, leader: 0, turn: 1 });
+  g.voids[3][E.groupOf(ctx, 1)] = 1;
+  g.trumpLeft[3] = 4;
+  pick = E.aiChoose(g, 1);
+  ok(pick.length === 4 && pick.indexOf(C5) < 0,
+     '队友主牌不足时不给分，实际 ' + pick.map(E.cardName));
+
+  // 队友没有缺 ♦ 信息：也一分不给
+  g = scaffold([[1, 1, 2, 2], [C2, C5, C6, C7, C8], spades[0], trumpHand], ctx,
+               { trick: [{ seat: 0, cards: [1, 1, 2, 2] }], lead: leadTrac, leader: 0, turn: 1 });
+  g.trumpLeft[3] = 6;
+  pick = E.aiChoose(g, 1);
+  ok(pick.length === 4 && pick.indexOf(C5) < 0,
+     '队友不缺门时不给分，实际 ' + pick.map(E.cardName));
+}
+
+// 7b13. 跟三条要出「一对+单张」时，单张优先用散牌，不拆别的对子
+{
+  const ctx = E.makeContext(2, 9, 0); // ♥主，级牌 9
+  const D2 = 0, D3 = 1, D4 = 2, D6 = 4;
+  const leadTriple = E.validateLead([D3, D3, D3], ctx).lead;
+
+  // 手上有对2、对4、散6：应出对2 + 散6，不为了凑一张拆对4
+  let g = scaffold([[D3, D3, D3], [D2, D2, D4, D4, D6, 20, 21],
+                    [30, 31, 32, 33], [40, 41, 42, 43]], ctx,
+                   { trick: [{ seat: 0, cards: [D3, D3, D3] }], lead: leadTriple, leader: 0, turn: 1 });
+  let pick = E.aiChoose(g, 1);
+  const sorted = pick.slice().sort(function (a, b) { return a - b; });
+  ok(sorted.length === 3 && sorted[0] === D2 && sorted[1] === D2 && sorted[2] === D6,
+     '跟三条用对2+散6，不拆对4，实际 ' + pick.map(E.cardName));
+  ok(pick.indexOf(D4) < 0, '不应拆对4');
+
+  // 只有对子没有散牌时，只能拆对子凑单张，但必须合法
+  g = scaffold([[D3, D3, D3], [D2, D2, D4, D4, 20, 21, 22],
+                [30, 31, 32, 33], [40, 41, 42, 43]], ctx,
+               { trick: [{ seat: 0, cards: [D3, D3, D3] }], lead: leadTriple, leader: 0, turn: 1 });
+  pick = E.aiChoose(g, 1);
+  ok(pick.length === 3 && E.validateFollow(g.hands[1], pick, leadTriple, ctx).ok,
+     '没有散牌时拆对子凑单张也要合法，实际 ' + pick.map(E.cardName));
+}
+
+// 7b14. 前面已有人毙牌：要么用更大的主牌反毙，要么不毙改跟无用牌
+{
+  const ctx = E.makeContext(2, 9, 0); // ♥主，级牌 9
+  const D6 = 4, D8 = 6, D10 = 8, H3 = 27, H4 = 28, H6 = 30;
+  const C3 = 14, C7 = 18, C8 = 19;
+  const myHand = [26, 26, H4, H6, C3, C7, C8]; // ♥2♥2 ♥4 ♥6 + 三张♣，缺♦
+  const lead = E.validateLead([D6], ctx).lead;
+
+  // 零分墩：东家已用 ♥3 毙掉，不跟着烧主牌，跟最小的无用牌
+  let g = scaffold([myHand, [D6], [D8], [H3]], ctx,
+                   { trick: [{ seat: 1, cards: [D6] }, { seat: 2, cards: [D8] }, { seat: 3, cards: [H3] }],
+                     lead: lead, leader: 1, turn: 0 });
+  let pick = E.aiChoose(g, 0);
+  ok(pick.length === 1 && pick[0] === C3,
+     '前面有人毙牌、零分墩不反毙，改跟无用牌，实际 ' + pick.map(E.cardName));
+
+  // 墩面 10 分：用刚好压过 ♥3 的最小主牌反毙，不用 ♥6
+  g = scaffold([myHand, [D6], [D10], [H3]], ctx,
+               { trick: [{ seat: 1, cards: [D6] }, { seat: 2, cards: [D10] }, { seat: 3, cards: [H3] }],
+                 lead: lead, leader: 1, turn: 0 });
+  pick = E.aiChoose(g, 0);
+  ok(pick.length === 1 && pick[0] === H4,
+     '有分墩用最小能压住的主牌反毙，实际 ' + pick.map(E.cardName));
 }
 
 // 7b3. 主牌大小：大王 > 小王 > 主级牌 > 副级牌 > A > K ...

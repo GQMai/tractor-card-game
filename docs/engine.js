@@ -108,6 +108,34 @@
     return r * 10;
   }
 
+  // 当前打牌等级（去重）。级牌会被抽到主牌组，所以副牌那一门里根本没有级牌。
+  function distinctLevels(ctx) {
+    var out = [];
+    for (var i = 0; i < ctx.levels.length; i++) {
+      if (out.indexOf(ctx.levels[i]) < 0) out.push(ctx.levels[i]);
+    }
+    return out;
+  }
+
+  /**
+   * 把 order 换算成“这一门里的第几级”，用来判断两张牌是否相邻。
+   * 关键点：级牌不在副牌序列里，所以打 5 时 ♠4 和 ♠6 是相邻的，能组成拖拉机。
+   * 返回 null 表示这张牌不参与连续（王、副级牌）。
+   */
+  function seqIndex(ctx, group, key, order) {
+    if (key.charAt(0) === 'J') return null; // 大小王各自单独一级，连不成拖拉机
+    var lv = distinctLevels(ctx);
+    if (order >= 1400) {
+      // 主牌组里的级牌：主级牌排在整门最高处；副级牌不进连续序列
+      if (group !== 4 || order !== 1500) return null;
+      return 13 - lv.length;
+    }
+    var r = Math.round(order / 10);
+    var skip = 0;
+    for (var i = 0; i < lv.length; i++) if (lv[i] < r) skip++;
+    return r - 2 - skip;
+  }
+
   // ---------------------------------------------------------------- 牌型分解
   /**
    * 把一组牌拆成 单张/对子/拖拉机 单元。
@@ -130,7 +158,8 @@
       var b = map[k2];
       units.push({
         len: 1, copies: b.cards.length, start: b.order, last: b.order,
-        key: b.key, group: b.group, cards: b.cards
+        key: b.key, group: b.group, cards: b.cards,
+        seq: seqIndex(ctx, b.group, b.key, b.order)
       });
     }
     units.sort(function (a, b) {
@@ -142,16 +171,18 @@
     for (var j = 0; j < units.length; j++) {
       var u = units[j];
       var prev = out[out.length - 1];
+      // 相邻判定用序号而不是 order 差 10：级牌不在副牌序列里，4 和 6 打 5 时是连着的
       if (prev && prev.group === u.group && prev.key === u.key &&
           prev.copies === u.copies && u.copies >= 2 &&
-          u.start === prev.last + 10) {
+          prev.seq !== null && u.seq !== null && u.seq === prev.seq + 1) {
         prev.len += 1;
         prev.last = u.start;
         prev.cards = prev.cards.concat(u.cards);
       } else {
         out.push({
           len: u.len, copies: u.copies, start: u.start, last: u.last,
-          key: u.key, group: u.group, cards: u.cards.slice()
+          key: u.key, group: u.group, cards: u.cards.slice(),
+          seq: u.seq
         });
       }
     }
@@ -166,7 +197,8 @@
     return n;
   }
 
-  function unitTop(u) { return u.start + (u.len - 1) * 10; }
+  // 单元的顶端 order。拖拉机跨过级牌时 order 不是每次 +10，所以用最后一张的 order
+  function unitTop(u) { return u.last !== undefined ? u.last : u.start + (u.len - 1) * 10; }
 
   function unitName(u) {
     if (u.len === 1) {
@@ -481,7 +513,7 @@
       var o = orderOf(ctx, c);
       var base = isJoker(c) ? 'J' + rankOf(c) : 'S' + suitOf(c);
       var k = base + '|' + o;
-      if (!map[k]) map[k] = { key: k, base: base, order: o, cards: [] };
+      if (!map[k]) map[k] = { key: k, base: base, order: o, group: groupOf(ctx, c), cards: [] };
       map[k].cards.push(c);
     }
     var list = [];
@@ -532,7 +564,7 @@
   }
 
   // 在按点数分好的桶里找一段连续的、每点至少 copies 张的链
-  function findChainRun(buckets, copies, len, high) {
+  function findChainRun(buckets, copies, len, high, ctx) {
     var byKey = {};
     for (var i = 0; i < buckets.length; i++) {
       var b = buckets[i];
@@ -545,7 +577,12 @@
       var run = [];
       for (var j = 0; j < arr.length; j++) {
         if (arr[j].cards.length < copies) { run = []; continue; }
-        if (run.length && arr[j].order !== run[run.length - 1].order + 10) run = [];
+        if (run.length) {
+          var praw = run[run.length - 1];
+          var pa = seqIndex(ctx, praw.group, praw.base, praw.order);
+          var ca = seqIndex(ctx, arr[j].group, arr[j].base, arr[j].order);
+          if (pa === null || ca === null || ca !== pa + 1) run = [];
+        }
         run.push(arr[j]);
         if (run.length >= len) {
           var cand = run.slice(run.length - len);
@@ -578,7 +615,7 @@
     // 1) 首家出拖拉机/推土机/连四条时，先跟同型链
     var chain = leadChainUnit(lead.units);
     if (chain && chain.len >= 2) {
-      var run = findChainRun(buckets, chain.copies, chain.len, high);
+      var run = findChainRun(buckets, chain.copies, chain.len, high, ctx);
       if (run) {
         for (var q = 0; q < run.length; q++) takeFrom(run[q], chain.copies);
       }

@@ -108,6 +108,34 @@
     return r * 10;
   }
 
+  // 当前打牌等级（去重）。级牌会被抽到主牌组，所以副牌那一门里根本没有级牌。
+  function distinctLevels(ctx) {
+    var out = [];
+    for (var i = 0; i < ctx.levels.length; i++) {
+      if (out.indexOf(ctx.levels[i]) < 0) out.push(ctx.levels[i]);
+    }
+    return out;
+  }
+
+  /**
+   * 把 order 换算成“这一门里的第几级”，用来判断两张牌是否相邻。
+   * 关键点：级牌不在副牌序列里，所以打 5 时 ♠4 和 ♠6 是相邻的，能组成拖拉机。
+   * 返回 null 表示这张牌不参与连续（王、副级牌）。
+   */
+  function seqIndex(ctx, group, key, order) {
+    if (key.charAt(0) === 'J') return null; // 大小王各自单独一级，连不成拖拉机
+    var lv = distinctLevels(ctx);
+    if (order >= 1400) {
+      // 主牌组里的级牌：主级牌排在整门最高处；副级牌不进连续序列
+      if (group !== 4 || order !== 1500) return null;
+      return 13 - lv.length;
+    }
+    var r = Math.round(order / 10);
+    var skip = 0;
+    for (var i = 0; i < lv.length; i++) if (lv[i] < r) skip++;
+    return r - 2 - skip;
+  }
+
   // ---------------------------------------------------------------- 牌型分解
   /**
    * 把一组牌拆成 单张/对子/拖拉机 单元。
@@ -130,7 +158,8 @@
       var b = map[k2];
       units.push({
         len: 1, copies: b.cards.length, start: b.order, last: b.order,
-        key: b.key, group: b.group, cards: b.cards
+        key: b.key, group: b.group, cards: b.cards,
+        seq: seqIndex(ctx, b.group, b.key, b.order)
       });
     }
     units.sort(function (a, b) {
@@ -142,16 +171,18 @@
     for (var j = 0; j < units.length; j++) {
       var u = units[j];
       var prev = out[out.length - 1];
+      // 相邻判定用序号而不是 order 差 10：级牌不在副牌序列里，4 和 6 打 5 时是连着的
       if (prev && prev.group === u.group && prev.key === u.key &&
           prev.copies === u.copies && u.copies >= 2 &&
-          u.start === prev.last + 10) {
+          prev.seq !== null && u.seq !== null && u.seq === prev.seq + 1) {
         prev.len += 1;
         prev.last = u.start;
         prev.cards = prev.cards.concat(u.cards);
       } else {
         out.push({
           len: u.len, copies: u.copies, start: u.start, last: u.last,
-          key: u.key, group: u.group, cards: u.cards.slice()
+          key: u.key, group: u.group, cards: u.cards.slice(),
+          seq: u.seq
         });
       }
     }
@@ -166,7 +197,8 @@
     return n;
   }
 
-  function unitTop(u) { return u.start + (u.len - 1) * 10; }
+  // 单元的顶端 order。拖拉机跨过级牌时 order 不是每次 +10，所以用最后一张的 order
+  function unitTop(u) { return u.last !== undefined ? u.last : u.start + (u.len - 1) * 10; }
 
   function unitName(u) {
     if (u.len === 1) {
@@ -209,6 +241,37 @@
     var units = decompose(cards, ctx);
     if (units.length === 1) {
       return { ok: true, lead: { cards: cards.slice(), group: g, units: units } };
+    }
+    // 甩主牌：要么每一段都是最大的（全大），要么其他家手里一张主牌都没有
+    if (g === 4 && unseen && unseen.length) {
+      var trumpHands = Array.isArray(unseen[0]) ? unseen : [unseen];
+      var othersTrump = false;
+      for (var a = 0; a < trumpHands.length && !othersTrump; a++) {
+        for (var b = 0; b < trumpHands[a].length; b++) {
+          if (groupOf(ctx, trumpHands[a][b]) === 4) { othersTrump = true; break; }
+        }
+      }
+      var okTrump = { ok: true, lead: { cards: cards.slice(), group: g, units: units } };
+      if (!othersTrump) return okTrump; // 别人都没主，随便甩
+      for (var ui = 0; ui < units.length; ui++) {
+        var u = units[ui];
+        for (var hh = 0; hh < trumpHands.length; hh++) {
+          var theirsT = decompose(trumpHands[hh].filter(function (c) {
+            return groupOf(ctx, c) === 4;
+          }), ctx);
+          for (var tt = 0; tt < theirsT.length; tt++) {
+            var o2 = theirsT[tt];
+            if (o2.copies === u.copies && o2.len >= u.len && unitTop(o2) > unitTop(u)) {
+              return {
+                ok: false,
+                msg: '甩主牌不成立：其他家还有更大的' + unitName(u) +
+                     '，主牌必须全大才能甩'
+              };
+            }
+          }
+        }
+      }
+      return okTrump;
     }
     // 甩牌只看决定这一墩归属的那一段（最大的结构），与收墩时的判定保持一致：
     // 其余小牌即使被更大的单牌盖过，也改变不了这一墩的归属，不该因此否决整手
@@ -450,7 +513,7 @@
       var o = orderOf(ctx, c);
       var base = isJoker(c) ? 'J' + rankOf(c) : 'S' + suitOf(c);
       var k = base + '|' + o;
-      if (!map[k]) map[k] = { key: k, base: base, order: o, cards: [] };
+      if (!map[k]) map[k] = { key: k, base: base, order: o, group: groupOf(ctx, c), cards: [] };
       map[k].cards.push(c);
     }
     var list = [];
@@ -474,6 +537,12 @@
         pairsLeft--;
       }
     }
+    // 补齐剩余张数时先用真正不成对的散牌，避免为了凑一张就把对子拆开
+    for (i = 0; i < buckets.length && chosen.length < n; i++) {
+      if (buckets[i].cards.length !== 1) continue;
+      chosen.push(buckets[i].cards[0]);
+      buckets[i].cards.splice(0, 1);
+    }
     for (i = 0; i < buckets.length && chosen.length < n; i++) {
       for (j = 0; j < buckets[i].cards.length && chosen.length < n; j++) {
         chosen.push(buckets[i].cards[j]);
@@ -495,7 +564,7 @@
   }
 
   // 在按点数分好的桶里找一段连续的、每点至少 copies 张的链
-  function findChainRun(buckets, copies, len, high) {
+  function findChainRun(buckets, copies, len, high, ctx) {
     var byKey = {};
     for (var i = 0; i < buckets.length; i++) {
       var b = buckets[i];
@@ -508,7 +577,12 @@
       var run = [];
       for (var j = 0; j < arr.length; j++) {
         if (arr[j].cards.length < copies) { run = []; continue; }
-        if (run.length && arr[j].order !== run[run.length - 1].order + 10) run = [];
+        if (run.length) {
+          var praw = run[run.length - 1];
+          var pa = seqIndex(ctx, praw.group, praw.base, praw.order);
+          var ca = seqIndex(ctx, arr[j].group, arr[j].base, arr[j].order);
+          if (pa === null || ca === null || ca !== pa + 1) run = [];
+        }
         run.push(arr[j]);
         if (run.length >= len) {
           var cand = run.slice(run.length - len);
@@ -541,7 +615,7 @@
     // 1) 首家出拖拉机/推土机/连四条时，先跟同型链
     var chain = leadChainUnit(lead.units);
     if (chain && chain.len >= 2) {
-      var run = findChainRun(buckets, chain.copies, chain.len, high);
+      var run = findChainRun(buckets, chain.copies, chain.len, high, ctx);
       if (run) {
         for (var q = 0; q < run.length; q++) takeFrom(run[q], chain.copies);
       }
@@ -554,6 +628,13 @@
                maxCopies === 2 ? [2, 1] : [1];
     for (var p = 0; p < prio.length && remain > 0; p++) {
       var level = prio[p];
+      // 用单张补齐时先挑真正不成对的散牌，最后才考虑拆对子/三条
+      if (level === 1) {
+        for (var li = 0; li < buckets.length && remain > 0; li++) {
+          if (buckets[li].cards.length !== 1) continue;
+          takeFrom(buckets[li], 1);
+        }
+      }
       for (var bi = 0; bi < buckets.length && remain > 0; bi++) {
         if (buckets[bi].cards.length >= level) takeFrom(buckets[bi], level);
       }
@@ -602,6 +683,22 @@
   function currentWinner(game) {
     if (!game.trick.length) return -1;
     return trickWinner(game.trick, game.lead, game.ctx);
+  }
+
+  // 当前最大牌是不是主牌毙出来的（前面已经有人毙牌）
+  function currentWinnerRuffed(game) {
+    var w = currentWinner(game);
+    if (w < 0) return false;
+    for (var i = 0; i < game.trick.length; i++) {
+      if (game.trick[i].seat !== w) continue;
+      var cs = game.trick[i].cards;
+      if (!cs || !cs.length) return false;
+      for (var j = 0; j < cs.length; j++) {
+        if (groupOf(game.ctx, cs[j]) !== 4) return false;
+      }
+      return true;
+    }
+    return false;
   }
 
   // 当前这墩的赢家信息（含赢牌单元），用于判断队友这一手是否已经必大
@@ -736,6 +833,89 @@
     return out;
   }
 
+  // 队友是否可能在后面毙掉这一墩；以及队友毙完之后能不能真的比当前这手更大。
+  // 只认已经确定的信息：队友对该门缺门且有足够主牌。
+  // over 表示「队友这一毙不一定能赢」，此时不能把分牌垫过去。
+  function partnerRuffInfo(game, seat, lg) {
+    var res = { ruff: false, over: false };
+    var lead = game.lead;
+    if (!lead || lg === 4) return res;
+    var p = partnerOf(seat);
+    var later = laterSeats(game, seat);
+    if (later.indexOf(p) < 0) return res;
+    var n = lead.cards.length;
+    if (!(game.voids && game.voids[p] && game.voids[p][lg])) return res;
+    var trumps = game.trumpLeft[p] || 0;
+    if (trumps < n) return res;
+    res.ruff = true;
+
+    // 1) 已经有人用主牌毙过：队友得凑出更大的同结构主牌，基本抢不过
+    var winner = currentWinner(game);
+    if (winner >= 0) {
+      for (var i = 0; i < game.trick.length; i++) {
+        var entry = game.trick[i];
+        if (entry.seat !== winner || !entry.cards.length) continue;
+        var allTrump = true;
+        for (var j = 0; j < entry.cards.length; j++) {
+          if (groupOf(game.ctx, entry.cards[j]) !== 4) { allTrump = false; break; }
+        }
+        if (allTrump) { res.over = true; return res; }
+      }
+    }
+
+    // 2) 首出是拖拉机/三条/四条时，队友必须凑出同结构的主牌；
+    //    主牌只有刚够张数的量时按「不一定比他更大」处理
+    var chain = leadChainUnit(lead.units);
+    var maxCopies = 1;
+    for (var ui = 0; ui < lead.units.length; ui++) {
+      if (lead.units[ui].copies > maxCopies) maxCopies = lead.units[ui].copies;
+    }
+    if (chain && chain.len >= 2 && trumps < n + 2) res.over = true;
+    else if (!chain && maxCopies >= 3 && trumps < n + 1) res.over = true;
+    return res;
+  }
+
+  // 超几何分布：池子里 pool 张、其中 cnt 张属于某点数，抽 draws 张至少拿到 need 张的概率。
+  // 判定结构必须严格相等时用它，避免把"任意几张主牌"都当成能毙对子/三条。
+  function logChoose(n, k) {
+    if (k < 0 || k > n) return -Infinity;
+    var r = 0;
+    for (var i = 1; i <= k; i++) r += Math.log(n - k + i) - Math.log(i);
+    return r;
+  }
+
+  function hyperAtLeast(cnt, pool, draws, need) {
+    var n = Math.min(draws, pool);
+    if (n <= 0 || cnt <= 0 || need <= 0) return 0;
+    var base = logChoose(pool, n);
+    if (base === -Infinity) return 0;
+    var p = 0, hi = Math.min(cnt, n);
+    for (var i = need; i <= hi; i++) {
+      var lp = logChoose(cnt, i) + logChoose(pool - cnt, n - i) - base;
+      if (lp > -Infinity) p += Math.exp(lp);
+    }
+    return Math.min(1, p);
+  }
+
+  // 缺门玩家用主牌毙牌的概率。结构必须严格相等：
+  // 对子要主牌对子、三条要主牌三条，不能拿任意几张主牌算。
+  function sameKindTrumpChance(game, seat, needCopies, trumps) {
+    var ctx = game.ctx;
+    var pool = unseenInGroup(game, seat, 4);
+    if (pool <= 0 || trumps < needCopies) return 0;
+    var pBest = 0;
+    for (var id = 0; id < 54; id++) {
+      if (groupOf(ctx, id) !== 4) continue;
+      var cnt = remainingCount(game, seat, id);
+      if (cnt < needCopies) continue;
+      var p = hyperAtLeast(cnt, pool, trumps, needCopies);
+      if (p > pBest) pBest = p;
+    }
+    if (pBest <= 0) return 0;
+    var groups = Math.max(1, Math.floor(trumps / needCopies));
+    return Math.min(1, 1 - Math.pow(1 - pBest, groups));
+  }
+
   // 后面某一家压过当前最大牌的概率估计：按暗牌里的同型大牌与主牌分布折算
   function beatChance(game, seat, t, best) {
     var ctx = game.ctx, lead = game.lead;
@@ -750,39 +930,58 @@
     // 主牌墩：只能靠更大的同型主牌压
     if (lead.group === 4) {
       var trumpPool = unseenInGroup(game, seat, 4);
-      var higherT = 0;
+      var trumpsT = game.trumpLeft[t] || 0;
+      if (trumpPool <= 0 || trumpsT <= 0) return 0;
+      var pBestT = 0;
       for (var id = 0; id < 54; id++) {
         if (groupOf(ctx, id) !== 4 || orderOf(ctx, id) <= top) continue;
-        higherT += remainingCount(game, seat, id);
+        var cntH = remainingCount(game, seat, id);
+        if (cntH < shape) continue;
+        var pH = hyperAtLeast(cntH, trumpPool, trumpsT, shape);
+        if (pH > pBestT) pBestT = pH;
       }
-      if (higherT <= 0 || trumpPool <= 0) return 0;
-      var q = Math.min(1, higherT / trumpPool);
-      var groups = Math.max(1, Math.floor((game.trumpLeft[t] || 0) / shape));
-      return Math.min(1, 1 - Math.pow(1 - q, groups));
+      if (pBestT <= 0) return 0;
+      // 单张时每张主牌都是机会；对子/三条必须凑同点，同一家凑出多组极罕见
+      var groupsT = shape === 1 ? Math.max(1, trumpsT) : Math.max(1, Math.floor(trumpsT / shape));
+      return Math.min(1, 1 - Math.pow(1 - pBestT, groupsT));
     }
 
     var p = 0;
     var sameLeft = unseenInGroup(game, seat, lead.group);
-    var higherSame = 0;
-    for (var id2 = 0; id2 < 54; id2++) {
-      if (groupOf(ctx, id2) !== lead.group || orderOf(ctx, id2) <= top) continue;
-      higherSame += remainingCount(game, seat, id2);
-    }
     var voidKnown = !!(game.voids && game.voids[t] && game.voids[t][lead.group]);
     var pVoid = voidKnown ? 1 :
       Math.pow(1 - Math.min(1, sameLeft / unseenTotal), h);
 
-    // 还有这一门的人：必须用同门更大的同型牌压
-    if (!voidKnown && higherSame > 0 && sameLeft > 0) {
-      var qSame = Math.min(1, higherSame / sameLeft);
+    // 还有这一门的人：必须用同门更大的同型牌压。对子/三条同样要凑点数
+    if (!voidKnown && sameLeft > 0) {
       var draws = Math.max(1, Math.floor(h * sameLeft / unseenTotal));
-      var pSame = 1 - Math.pow(1 - qSame, Math.max(1, Math.floor(draws / shape)));
+      var pSame = 0;
+      for (var id2 = 0; id2 < 54; id2++) {
+        if (groupOf(ctx, id2) !== lead.group || orderOf(ctx, id2) <= top) continue;
+        var cntS = remainingCount(game, seat, id2);
+        if (cntS < shape) continue;
+        var pS = hyperAtLeast(cntS, sameLeft, draws, shape);
+        if (pS > pSame) pSame = pS;
+      }
+      if (shape === 1) {
+        var higherSame = 0;
+        for (var id3 = 0; id3 < 54; id3++) {
+          if (groupOf(ctx, id3) !== lead.group || orderOf(ctx, id3) <= top) continue;
+          higherSame += remainingCount(game, seat, id3);
+        }
+        pSame = 1 - Math.pow(1 - Math.min(1, higherSame / sameLeft), draws);
+      }
       p += (1 - pVoid) * pSame;
     }
-    // 缺门的人：手里只要有结构相同的主牌就能毙，与主牌大小无关
+    // 缺门的人：单张任意主牌都能毙；对子/三条必须凑出主牌对子/主牌三条
     var trumps = game.trumpLeft[t] || 0;
     if (trumps > 0) {
-      var pRuff = 1 - Math.pow(1 - Math.min(1, trumps / h), shape);
+      var pRuff;
+      if (unit.len === 1 && shape >= 2) {
+        pRuff = sameKindTrumpChance(game, seat, shape, trumps);
+      } else {
+        pRuff = 1 - Math.pow(1 - Math.min(1, trumps / h), shape);
+      }
       p += pVoid * pRuff;
     }
     return Math.min(1, p);
@@ -855,6 +1054,26 @@
       (game.lead ? game.lead.cards.length : 1) + 4;
     var denyVal = blocking ? (endgame ? 3.2 : 1.6) + (side.theirs > 0 ? 0.8 : 0) : 0;
     var rescue = side.mine * 0.4; // 队友跑分的额外价值
+
+    // 前面已经有人用主牌毙过：要么用更大的主牌压过去，要么干脆不毙、跟无用牌。
+    // 这种局面抢出牌权的意义很小，只看墩面分成不成正比，避免烧掉大主去反毙一张小主。
+    // 能压住由 aiFollow 的 beatsCurrent 保证（严格更大才进 wins）。
+    if (currentWinnerRuffed(game)) {
+      var gain = 2 * pot + rescue + (side.theirs > 0 ? 1.2 : 0);
+      var overBest = null, overVal = -Infinity;
+      for (var oi = 0; oi < wins.length; oi++) {
+        var osel = wins[oi];
+        var orisk = overRuffRisk(game, seat, osel);
+        var ocost = ruffCost(game, seat, osel);
+        var oval = (1 - orisk) * gain - ocost;
+        if (oval > overVal) { overVal = oval; overBest = osel; }
+      }
+      if (!overBest) return null;
+      // 不划算就放弃反毙，改垫无用牌；末墩为了底牌加成仍然要争
+      if (!isFinal && overVal <= 0.5) return null;
+      return overBest;
+    }
+
     var best = null, bestVal = -Infinity, bestRisk = 0;
     var safest = null, safestRisk = Infinity, safestCost = Infinity;
     for (var i = 0; i < wins.length; i++) {
@@ -1220,6 +1439,86 @@
     return best.cards.slice();
   }
 
+  // 首出里最大的拖拉机长度（0 表示不是拖拉机）
+  function leadTractorLen(lead) {
+    var u = leadChainUnit(lead.units);
+    return u && u.len >= 2 ? u.len : 0;
+  }
+
+  // 缺门用主牌跟副牌时的第一选择：最便宜的散主。
+  // 对子/三条/拖拉机是后面单独赢墩、抢出牌权的本钱，不能为了跟一手就拆掉；
+  // 散主不够时返回 null，交给通用逻辑处理。
+  function looseTrumpPick(hand, n, ctx) {
+    var trumps = [];
+    for (var i = 0; i < hand.length; i++) {
+      if (groupOf(ctx, hand[i]) === 4) trumps.push(hand[i]);
+    }
+    if (trumps.length < n) return null;
+    var units = decompose(trumps, ctx);
+    var singles = [];
+    for (var u = 0; u < units.length; u++) {
+      if (units[u].cards.length === 1) singles.push(units[u].cards[0]);
+    }
+    if (singles.length < n) return null;
+    singles.sort(function (a, b) { return cardValue(ctx, a) - cardValue(ctx, b); });
+    return singles.slice(0, n);
+  }
+
+  // 手牌里每张牌所在结构的大小：1=散牌，2=对子，>=3=三条/四条/链。
+  // 缺门垫牌时用它把「散牌先走、对子三条留着」落到实处。
+  function structSizes(hand, ctx) {
+    var size = {};
+    var units = decompose(hand, ctx);
+    for (var i = 0; i < units.length; i++) {
+      var cs = units[i].cards;
+      for (var j = 0; j < cs.length; j++) size[cs[j]] = cs.length;
+    }
+    return size;
+  }
+
+  // 跟一手压不住的牌：先保证不送分，再选最小的散牌。
+  // 同门够张必须先跟同门，不够张才用其它牌补；补牌时优先不拆对子/三条/拖拉机。
+  function noPointFollow(hand, lead, ctx) {
+    var n = lead.cards.length, lg = lead.group;
+    var S = hand.filter(function (c) { return groupOf(ctx, c) === lg; });
+    var rest = hand.filter(function (c) { return groupOf(ctx, c) !== lg; });
+    var sizes = structSizes(hand, ctx);
+    function structRank(c) { return sizes[c] > 1 ? 1 : 0; }
+    function byPoint(a, b) {
+      var pa = pointOf(a) ? 1 : 0, pb = pointOf(b) ? 1 : 0;
+      return pa - pb || structRank(a) - structRank(b) || orderOf(ctx, a) - orderOf(ctx, b);
+    }
+    if (S.length >= n) return S.slice().sort(byPoint).slice(0, n);
+    var need = n - S.length;
+    var fill = rest.slice().sort(function (a, b) {
+      var pa = pointOf(a) ? 1 : 0, pb = pointOf(b) ? 1 : 0;
+      var ta = groupOf(ctx, a) === 4 ? 1 : 0, tb = groupOf(ctx, b) === 4 ? 1 : 0;
+      return pa - pb || structRank(a) - structRank(b) || ta - tb || orderOf(ctx, a) - orderOf(ctx, b);
+    });
+    return S.concat(fill.slice(0, need));
+  }
+
+  // 队友这一墩稳赢时，把分牌尽量垫给队友：
+  // 先垫分牌，同等分数下优先不拆对子/三条/拖拉机、再优先非主牌。
+  function pointDumpFollow(hand, lead, ctx) {
+    var n = lead.cards.length, lg = lead.group;
+    var S = hand.filter(function (c) { return groupOf(ctx, c) === lg; });
+    var rest = hand.filter(function (c) { return groupOf(ctx, c) !== lg; });
+    var sizes = structSizes(hand, ctx);
+    function rank(a, b) {
+      var pa = pointOf(a), pb = pointOf(b);
+      if (pa !== pb) return pb - pa;
+      var sa = sizes[a] > 1 ? 1 : 0, sb = sizes[b] > 1 ? 1 : 0;
+      if (sa !== sb) return sa - sb;
+      var ta = groupOf(ctx, a) === 4 ? 1 : 0, tb = groupOf(ctx, b) === 4 ? 1 : 0;
+      if (ta !== tb) return ta - tb;
+      return orderOf(ctx, a) - orderOf(ctx, b);
+    }
+    if (S.length >= n) return S.slice().sort(rank).slice(0, n);
+    var need = n - S.length;
+    return S.concat(rest.slice().sort(rank).slice(0, need));
+  }
+
   // ---------------------------------------------------------------- 跟牌
   function aiFollow(game, seat) {
     var ctx = game.ctx, hand = game.hands[seat], lead = game.lead;
@@ -1258,6 +1557,15 @@
     var evWin = null, evWinVal = -Infinity, evWinPts = 0, evWinP = 0;
     var evLose = null, evLoseVal = -Infinity, evLosePts = 0;
     var canRuff = S.length === 0 && lg !== 4;
+    // 缺门时手上还能垫的其它副牌张数；不够 n 张就不得不动用主牌
+    var otherSuits = 0;
+    for (var oi = 0; oi < hand.length; oi++) {
+      var og = groupOf(ctx, hand[oi]);
+      if (og !== 4 && og !== lg) otherSuits++;
+    }
+    var forcedTrump = canRuff && otherSuits < n;
+    // 我方这一手落下后最终赢墩的最好概率，用于判断垫主牌时值不值得争
+    var coverP = 0;
 
     for (var i = 0; i < cands.length; i++) {
       var sel = cands[i];
@@ -1269,6 +1577,7 @@
       // 我方最终赢墩的概率，以及这一手（含分牌）的期望收益：
       // 打赢得分、打输送分，所以分牌价值按 2×胜率-1 折算
       var pWin = teamWinChance(game, seat, sel);
+      if (pWin > coverP) coverP = pWin;
       var ev = (2 * pWin - 1) * (pts + p) - cost;
 
       if (win) {
@@ -1302,18 +1611,51 @@
     }
 
     if (partnerWinning) {
-      // 队友当前赢墩：赢面大就把分牌送过去，赢面小只跟最小的没用牌
-      if (evLose && evLosePts > 0 && evLoseVal > 0) return evLose;
+      // 队友当前赢墩：赢面大就把分牌送过去，赢面小只跟最小的没用牌。
+      // 用更大的同结构压过队友不损失团队收益（墩还是我方的），
+      // 三条/四条这种罕见大牌尤其实在，能压就直接把分带走。
+      var give = null, giveVal = 0;
+      if (evWin && evWinPts > 0 && evWinVal > giveVal) { give = evWin; giveVal = evWinVal; }
+      if (evLose && evLosePts > 0 && evLoseVal > giveVal) { give = evLose; giveVal = evLoseVal; }
+      if (give) return give;
       if (cheapestBreak && safeLose) return safeLose;
       if (cheapest) return cheapest;
       return cheapestWin || cands[0];
+    }
+
+    // 对手首出拖拉机：先判断我们这一手有没有更大的拖拉机压得住。
+    // 压不住就别往这墩里塞分（压得住时后面的逻辑自然会用更大的拖拉机赢下这墩）；
+    // 队友在后面确定缺门、且没有被更后面的对手反毙时，可以把分牌垫给队友。
+    if (leadTractorLen(lead) >= 2 && !sameTeam(game.leader, seat)) {
+      var canBeatNow = false;
+      for (var t0 = 0; t0 < cands.length; t0++) {
+        if (beatsCurrent(game, cands[t0])) { canBeatNow = true; break; }
+      }
+      if (!canBeatNow) {
+        var pr = partnerRuffInfo(game, seat, lg);
+        if (pr.ruff && !pr.over) {
+          var giveTrac = pointDumpFollow(hand, lead, ctx);
+          if (giveTrac) return giveTrac;
+        }
+        // 缺门跟拖拉机时优先最便宜的散主，对子/三条/拖拉机留到后面赢墩
+        if (forcedTrump) {
+          var looseTrac = looseTrumpPick(hand, n, ctx);
+          if (looseTrac) return looseTrac;
+        }
+        return noPointFollow(hand, lead, ctx);
+      }
     }
 
     // 缺门毙牌：按墩面分数与后手反毙概率决定毙不毙、毙多大
     if (ruffWins.length) {
       var ruff = chooseRuff(game, seat, ruffWins, pts, isFinal, lastToPlay);
       if (ruff) return ruff;
-      // 不值得毙时改垫牌，不再用贵主牌硬抢
+      // 不值得毙时改跟无用牌，不再用贵主牌硬抢；
+      // 缺门垫主时优先最便宜的散主，对子/拖拉机留着后面赢墩
+      var looseR = forcedTrump ? looseTrumpPick(hand, n, ctx) : null;
+      if (looseR) return looseR;
+      var quiet = noPointFollow(hand, lead, ctx);
+      if (quiet && quiet.length === n && validateFollow(hand, quiet, lead, ctx).ok) return quiet;
       if (cheapestBreak && safeLose) return safeLose;
       if (cheapest) return cheapest;
     }
@@ -1349,6 +1691,12 @@
     if (!canRuff && evWin && evWinP >= 0.7 && evWinPts > 0 && evWinVal > 0) return evWin;
     // 赢不了这墩时优先保留对子/拖拉机，宁可垫一张散牌；
     // 有输墩风险时按胜率折算，胜率低就只出小的没用牌，不送分
+    if (forcedTrump && coverP < 0.5) {
+      // 缺门只能动用主牌、这墩又基本拿不到时，优先最便宜的散主，
+      // 把对子/拖拉机留到后面赢墩
+      var looseF = looseTrumpPick(hand, n, ctx);
+      if (looseF) return looseF;
+    }
     if (cheapestBreak && safeLose) return safeLose;
     if (evLose) return evLose;
     if (cheapest) return cheapest;
