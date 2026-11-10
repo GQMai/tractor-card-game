@@ -38,6 +38,122 @@ ok(E.cardName(53) === '大王' && E.cardName(0) === '♦2', '牌名');
   ok(!E.isTrump(ctx, 2), '方块4不是主（5 是级牌，四门 5 均为主）');
 }
 
+// 3b. 完整大小顺序与相邻规则：主牌梅花、打 5
+{
+  const ctx = E.makeContext(1, 5, 0); // ♣ 主，级牌 5
+  const D = r => 0 * 13 + (r - 2);
+  const C = r => 1 * 13 + (r - 2);
+  const H = r => 2 * 13 + (r - 2);
+  const S = r => 3 * 13 + (r - 2);
+  const ord = c => E.orderOf(ctx, c);
+
+  // 主牌：大王 > 小王 > 主5 > 其它花色5 > A K Q J 10 9 8 7 6 4 3 2
+  const ladder = [53, 52, C(5), D(5), C(14), C(13), C(12), C(11),
+                  C(10), C(9), C(8), C(7), C(6), C(4), C(3), C(2)];
+  for (let i = 1; i < ladder.length; i++) {
+    ok(ord(ladder[i - 1]) > ord(ladder[i]),
+       '主牌顺序 ' + E.cardName(ladder[i - 1]) + ' > ' + E.cardName(ladder[i]));
+  }
+  ok(ord(D(5)) === ord(H(5)) && ord(H(5)) === ord(S(5)), '三门副5 同级');
+  ok(ord(C(5)) > ord(D(5)), '主5 大于副5');
+  ok(ord(D(5)) > ord(C(14)), '副5 大于 A');
+  ok(ord(52) > ord(C(5)), '小王 大于 主5');
+
+  // 副牌：A K Q J 10 9 8 7 6 4 3 2（没有 5）
+  const suitLadder = [14, 13, 12, 11, 10, 9, 8, 7, 6, 4, 3, 2].map(D);
+  for (let i = 1; i < suitLadder.length; i++) {
+    ok(ord(suitLadder[i - 1]) > ord(suitLadder[i]),
+       '副牌顺序 ' + E.cardName(suitLadder[i - 1]) + ' > ' + E.cardName(suitLadder[i]));
+  }
+  ok(E.groupOf(ctx, D(5)) === 4, '副5 属于主牌组');
+  ok(!E.isTrump(ctx, D(6)) && !E.isTrump(ctx, D(4)), '♦6 ♦4 仍是副牌');
+
+  // 对子必须同花色：主5 与副5 不是一对，三门副5 之间也不能凑对子/三条
+  ok(E.decompose([C(5), C(5)], ctx)[0].copies === 2, '对主5');
+  ok(E.decompose([C(5), D(5)], ctx).length === 2, '主5 + 副5 不算对子');
+  let mixed = E.decompose([D(5), D(5)], ctx);
+  ok(mixed.length === 1 && mixed[0].copies === 2, '同花色 ♦5♦5 才是对子');
+  ok(E.decompose([D(5), H(5)], ctx).length === 2, '♦5♥5 不同花色不算对子');
+  ok(E.decompose([D(5), H(5), S(5)], ctx).length === 3, '三门副5 不同花色不能凑三条');
+  ok(E.decompose([D(5), D(5), H(5), H(5)], ctx).length === 2,
+     '♦5♦5♥5♥5 是两对，不是四条');
+  ok(E.decompose([D(5), D(5), D(5), D(5)], ctx)[0].copies === 4,
+     '同花色四张副5 才是四条');
+  mixed = E.decompose([53, 53, 52, 52], ctx);
+  ok(mixed.length === 1 && mixed[0].len === 2 && mixed[0].copies === 2,
+     '对大王 + 对小王 是两连对，不是四条');
+  ok(E.decompose([53, 53, 53, 53], ctx)[0].copies === 4, '四张大王是四条');
+
+  // 只有大小顺序里相邻的点数才能组成拖拉机
+  const chain = cards => {
+    const u = E.decompose(cards, ctx);
+    return u.length === 1 && u[0].len === cards.length / 2;
+  };
+  ok(!chain([C(5), C(5), C(14), C(14)]), '对主5 + 对A 不是拖拉机（中间隔着副5）');
+  ok(!chain([C(5), C(5), C(13), C(13)]), '对主5 + 对K 不是拖拉机');
+  ok(chain([C(14), C(14), C(13), C(13)]), '对A + 对K 是拖拉机');
+  ok(chain([C(14), C(14), C(13), C(13), C(12), C(12)]), 'AAKKQQ 是拖拉机');
+  ok(chain([C(6), C(6), C(4), C(4)]), '对6 + 对4 是拖拉机（跳过级牌5）');
+  ok(chain([D(6), D(6), D(4), D(4)]), '副牌对6 + 对4 是拖拉机');
+  ok(!chain([D(8), D(8), D(6), D(6)]), '副牌对8 + 对6 中间隔着7，不是拖拉机');
+
+  // 王、级牌、A 都在主牌序列里，可以连成跨王跨级牌的拖拉机
+  ok(chain([52, 52, C(5), C(5)]), '对小王 + 对主5 是连对');
+  ok(chain([C(5), C(5), D(5), D(5)]), '对主5 + 对副5 是连对');
+  ok(chain([D(5), D(5), C(14), C(14)]), '对副5 + 对A 是连对');
+  ok(chain([D(5), D(5), C(14), C(14), C(13), C(13)]), '副5 + AA + KK 是三连对');
+  ok(!chain([53, 53, C(5), C(5)]), '对大王 + 对主5 跳过小王，不是连对');
+  const fivePair = [53, 53, 52, 52, C(5), C(5), D(5), D(5), C(14), C(14)];
+  ok(chain(fivePair), '对大王+对小王+对主5+对副5+对A 是五连对');
+  const fiveLead = E.validateLead(fivePair, ctx).lead;
+  ok(!!fiveLead && fiveLead.units.length === 1, '五连对可以一次首出');
+  const normalFive = [C(13), C(13), C(12), C(12), C(11), C(11), C(10), C(10), C(9), C(9)];
+  ok(E.trickWinner([
+    { seat: 0, cards: fivePair.slice() },
+    { seat: 1, cards: normalFive }
+  ], fiveLead, ctx) === 0, '五连对压普通五连对（KKQQJJ101099）');
+  const twoLead = E.validateLead([53, 53, C(5), C(5)], ctx);
+  ok(twoLead.ok && twoLead.lead.units.length === 2, '对大王 + 对主5 首出时是两段');
+
+  // 比大小：副5 压 A，主5 压副5，同级先出者赢
+  const leadA = E.validateLead([C(14)], ctx).lead;
+  ok(E.trickWinner([{ seat: 0, cards: [C(14)] }, { seat: 1, cards: [D(5)] }],
+                   leadA, ctx) === 1, '副5 能压主A');
+  const leadD5 = E.validateLead([D(5)], ctx).lead;
+  ok(E.trickWinner([{ seat: 0, cards: [D(5)] }, { seat: 1, cards: [H(5)] }],
+                   leadD5, ctx) === 0, '两个副5 同级，先出者赢');
+  ok(E.trickWinner([{ seat: 0, cards: [D(5)] }, { seat: 1, cards: [C(5)] }],
+                   leadD5, ctx) === 1, '主5 压副5');
+  const pairLead = E.validateLead([D(5), D(5)], ctx).lead;
+  ok(pairLead && pairLead.units.length === 1, '同花色 ♦5♦5 可以首出对子');
+  ok(E.trickWinner([{ seat: 0, cards: [D(5), D(5)] }, { seat: 1, cards: [C(5), C(5)] }],
+                   pairLead, ctx) === 1, '对主5 压对副5');
+  const mainPairLead = E.validateLead([C(5), C(5)], ctx).lead;
+  ok(!E.validateFollow([D(5), H(5), C(5), C(5)], [D(5), H(5)], mainPairLead, ctx).ok,
+     '手里有对子时必须跟对子，♦5♥5 不能冒充对子');
+  const mixedLead = E.validateLead([C(5), C(5), C(14), C(14)], ctx);
+  ok(mixedLead.ok && mixedLead.lead.units.length === 2,
+     '对主5 + 对A 首出时是两段，不是一手拖拉机');
+}
+
+// 3c. 无主（trumpSuit = 4）：四门级牌同级
+{
+  const ctx = E.makeContext(4, 5, 0);
+  const D5 = 0 * 13 + 3, H5 = 2 * 13 + 3, S5 = 3 * 13 + 3, CA = 1 * 13 + 12;
+  ok(E.orderOf(ctx, D5) === E.orderOf(ctx, S5), '无主时四门5 同级');
+  ok(E.orderOf(ctx, D5) === E.orderOf(ctx, H5), '无主时 ♦5♥5 同级');
+  let m = E.decompose([D5, S5], ctx);
+  ok(m.length === 2, '无主时 ♦5♠5 不同花色不算对子');
+  m = E.decompose([D5, D5], ctx);
+  ok(m.length === 1 && m[0].copies === 2, '无主时同花色 ♦5♦5 才是对子');
+  m = E.decompose([D5, D5, CA, CA], ctx);
+  ok(m.length === 2, '无主时 对5 + 对A 不是拖拉机');
+  m = E.decompose([53, 53, 52, 52, D5, D5], ctx);
+  ok(m.length === 1 && m[0].len === 3, '无主时 对大王+对小王+对5 是三连对');
+  m = E.decompose([53, 53, D5, D5], ctx);
+  ok(m.length === 2, '无主时 对大王+对5 跳过小王，不是连对');
+}
+
 // 4. 牌型分解
 {
   const ctx = E.makeContext(2, 9, 0); // 主牌红桃，级牌 9
@@ -112,9 +228,9 @@ ok(E.cardName(53) === '大王' && E.cardName(0) === '♦2', '牌名');
   // 主牌里跨过主级牌同理
   u = E.decompose([H4, H4, H6, H6], ctx);
   ok(u.length === 1 && u[0].len === 2, '打5时 ♥4♥4♥6♥6 是主牌拖拉机');
-  // 主级牌排在 A 之上，和 A 相邻
+  // 主级牌和 A 之间还隔着其它花色的 5，两者不相邻
   u = E.decompose([HA, HA, H5, H5], ctx);
-  ok(u.length === 1 && u[0].len === 2, '主A 和主级牌相邻，能组成拖拉机');
+  ok(u.length === 2, '主A 和主5 中间隔着其它花色的5，不是拖拉机');
 
   // 出牌、压牌、跟牌都认这个结构
   const leadTrac = E.validateLead([D4, D4, D6, D6], ctx).lead;

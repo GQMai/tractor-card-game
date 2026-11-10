@@ -119,16 +119,20 @@
 
   /**
    * 把 order 换算成“这一门里的第几级”，用来判断两张牌是否相邻。
-   * 关键点：级牌不在副牌序列里，所以打 5 时 ♠4 和 ♠6 是相邻的，能组成拖拉机。
-   * 返回 null 表示这张牌不参与连续（王、副级牌）。
+   * 打 5、主梅花时主牌整条阶梯是：
+   *   大王 小王 主5 其它花色5 A K Q J 10 9 8 7 6 4 3 2
+   * 所以王、级牌都在序列里，各占一级，都能参与拖拉机；
+   * 副牌里级牌被抽走了，打 5 时 ♠4 和 ♠6 才是相邻的。
    */
-  function seqIndex(ctx, group, key, order) {
-    if (key.charAt(0) === 'J') return null; // 大小王各自单独一级，连不成拖拉机
+  function seqIndex(ctx, order) {
     var lv = distinctLevels(ctx);
+    var normalMax = 12 - lv.length; // A 的序号
     if (order >= 1400) {
-      // 主牌组里的级牌：主级牌排在整门最高处；副级牌不进连续序列
-      if (group !== 4 || order !== 1500) return null;
-      return 13 - lv.length;
+      var hasMain = ctx.trumpSuit !== 4 ? 1 : 0; // 有主级牌这一级
+      if (order >= 1700) return normalMax + hasMain + 3; // 大王
+      if (order >= 1600) return normalMax + hasMain + 2; // 小王
+      if (order >= 1500) return normalMax + 2;           // 主级牌
+      return normalMax + 1;                               // 副级牌（无主时四门同级）
     }
     var r = Math.round(order / 10);
     var skip = 0;
@@ -146,8 +150,9 @@
     for (var i = 0; i < cards.length; i++) {
       var c = cards[i];
       var g = groupOf(ctx, c);
-      var key = isJoker(c) ? 'J' + rankOf(c) : 'S' + suitOf(c);
       var o = orderOf(ctx, c);
+      // 对子/三条/四条必须同花色：♦5 和 ♥5 不能凑一对，各级牌、王都按花色分桶
+      var key = isJoker(c) ? 'J' + rankOf(c) : 'S' + suitOf(c);
       var k = g + '|' + key + '|' + o;
       if (!map[k]) map[k] = { group: g, key: key, order: o, cards: [] };
       map[k].cards.push(c);
@@ -156,27 +161,34 @@
     for (var k2 in map) {
       if (!map.hasOwnProperty(k2)) continue;
       var b = map[k2];
-      units.push({
-        len: 1, copies: b.cards.length, start: b.order, last: b.order,
-        key: b.key, group: b.group, cards: b.cards,
-        seq: seqIndex(ctx, b.group, b.key, b.order)
-      });
+      // 同一点数最多按四张一组：四副牌里副级牌有 12 张，不能合成“六条”这种不存在的牌型
+      for (var s = 0; s < b.cards.length; s += 4) {
+        var part = b.cards.slice(s, s + 4);
+        units.push({
+          len: 1, copies: part.length, start: b.order, last: b.order,
+          key: b.key, group: b.group, cards: part,
+          seq: seqIndex(ctx, b.order)
+        });
+      }
     }
+    // 按“门 + 序列序号”排，主牌里王、级牌、A 才会排成一条连续的阶梯
     units.sort(function (a, b) {
       if (a.group !== b.group) return a.group - b.group;
-      if (a.key !== b.key) return a.key < b.key ? -1 : 1;
+      if (a.seq !== b.seq) return a.seq - b.seq;
       return a.start - b.start;
     });
     var out = [];
     for (var j = 0; j < units.length; j++) {
       var u = units[j];
       var prev = out[out.length - 1];
-      // 相邻判定用序号而不是 order 差 10：级牌不在副牌序列里，4 和 6 打 5 时是连着的
-      if (prev && prev.group === u.group && prev.key === u.key &&
+      // 相邻判定用序号而不是 order 差 10：级牌不在副牌序列里，4 和 6 打 5 时是连着的；
+      // 主牌里王、级牌、A 依次相邻，所以整条 王-王-主5-副5-A-K... 都能连成拖拉机
+      if (prev && prev.group === u.group &&
           prev.copies === u.copies && u.copies >= 2 &&
-          prev.seq !== null && u.seq !== null && u.seq === prev.seq + 1) {
+          u.seq === prev.seq + 1) {
         prev.len += 1;
         prev.last = u.start;
+        prev.seq = u.seq; // 继续往后接：三连对、四连对都要能一路合并
         prev.cards = prev.cards.concat(u.cards);
       } else {
         out.push({
@@ -511,6 +523,8 @@
     for (var i = 0; i < cards.length; i++) {
       var c = cards[i];
       var o = orderOf(ctx, c);
+      // 桶按“花色 + 点数”分：同花色同点数才算对子；找链时再按门合并，
+      // 这样王、级牌、主花色 A 能连成拖拉机，但 ♦5♥5 不会被当成一对
       var base = isJoker(c) ? 'J' + rankOf(c) : 'S' + suitOf(c);
       var k = base + '|' + o;
       if (!map[k]) map[k] = { key: k, base: base, order: o, group: groupOf(ctx, c), cards: [] };
@@ -565,23 +579,24 @@
 
   // 在按点数分好的桶里找一段连续的、每点至少 copies 张的链
   function findChainRun(buckets, copies, len, high, ctx) {
-    var byKey = {};
+    var byGroup = {};
     for (var i = 0; i < buckets.length; i++) {
       var b = buckets[i];
-      (byKey[b.base] = byKey[b.base] || []).push(b);
+      (byGroup[b.group] = byGroup[b.group] || []).push(b);
     }
     var best = null;
-    for (var k in byKey) {
-      if (!byKey.hasOwnProperty(k)) continue;
-      var arr = byKey[k].slice().sort(function (a, b) { return a.order - b.order; });
+    for (var k in byGroup) {
+      if (!byGroup.hasOwnProperty(k)) continue;
+      var arr = byGroup[k].slice().sort(function (a, b) { return a.order - b.order; });
       var run = [];
       for (var j = 0; j < arr.length; j++) {
         if (arr[j].cards.length < copies) { run = []; continue; }
         if (run.length) {
           var praw = run[run.length - 1];
-          var pa = seqIndex(ctx, praw.group, praw.base, praw.order);
-          var ca = seqIndex(ctx, arr[j].group, arr[j].base, arr[j].order);
-          if (pa === null || ca === null || ca !== pa + 1) run = [];
+          var pa = seqIndex(ctx, praw.order);
+          var ca = seqIndex(ctx, arr[j].order);
+          if (ca === pa) continue; // 同一点数的另一种花色，只能算另一对，不能接在链上
+          if (ca !== pa + 1) run = [];
         }
         run.push(arr[j]);
         if (run.length >= len) {
