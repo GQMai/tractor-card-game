@@ -365,6 +365,8 @@ button {
   transform-origin: 50% 92%;
   transform: rotate(var(--rot, 0deg)) translateY(0);
   cursor: pointer;
+  /* 按住拖动连选时不要触发页面滚动/缩放手势 */
+  touch-action: none;
 }
 /* 悬停只做高亮，不移动牌：牌一旦位移会躲开鼠标，导致悬停反复触发而抖动 */
 .hand-card:hover {

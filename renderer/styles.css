@@ -365,6 +365,8 @@ button {
   transform-origin: 50% 92%;
   transform: rotate(var(--rot, 0deg)) translateY(0);
   cursor: pointer;
+  /* 按住拖动连选时不要触发页面滚动/缩放手势 */
+  touch-action: none;
 }
 /* 悬停只做高亮，不移动牌：牌一旦位移会躲开鼠标，导致悬停反复触发而抖动 */
 .hand-card:hover {
@@ -694,6 +696,48 @@ button {
   .round-info { gap: 7px; font-size: 12px; }
   .score-box { min-width: 110px; max-width: 170px; }
   .pill { padding: 0 10px; font-size: 12px; }
+}
+
+/* ------------------------------------------------------------ 语音陪聊 */
+#btnVoice.on {
+  background: rgba(217, 185, 106, 0.26);
+  border-color: var(--gold);
+  color: #fff7de;
+}
+#btnVoice.busy { opacity: 0.6; }
+
+#voiceBar {
+  position: absolute;
+  top: 14px;
+  left: 16px;
+  width: 340px;
+  z-index: 12;
+  padding: 10px 14px 12px;
+  border-radius: 12px;
+  background: rgba(4, 16, 12, 0.9);
+  border: 1px solid var(--gold-soft);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.38);
+  pointer-events: none;
+}
+
+#voiceState {
+  font-size: 13px;
+  letter-spacing: 1px;
+  color: var(--gold);
+  transition: color 0.2s;
+}
+#voiceState.listening { color: #7fe0b0; }
+#voiceState.thinking { color: #9cc7ff; }
+#voiceState.speaking { color: var(--gold); }
+#voiceState.error { color: #ff9a8a; }
+
+#voiceLine {
+  margin-top: 6px;
+  min-height: 26px;
+  font-size: 17px;
+  line-height: 1.5;
+  color: var(--ink);
+  word-break: break-word;
 }
 
 .hidden { display: none !important; }

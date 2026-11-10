@@ -27,7 +27,8 @@
     winnerSeat: null,
     soundOn: settings.sound,
     holdUntil: 0,
-    epoch: 0
+    epoch: 0,
+    suppressClick: false
   };
   var lastTrickKey = '';
   var autoNextTimer = null;
@@ -340,8 +341,9 @@
       }
     } else if (g.phase === 'bury') {
       if (g.bankerSeat === 0) {
-        hint.textContent = '你是庄家：已选 ' + sel + ' / ' + g.bottomN + ' 张，请扣底（右键可选该花色右侧全部牌）';
-        label = '扣底';
+        hint.textContent = '你是庄家：已选 ' + sel + ' / ' + g.bottomN +
+          ' 张，请扣底（按住拖动可连选，右键选该花色右侧全部）';
+        label = '扣底 ' + sel + '/' + g.bottomN;
         canPlay = sel === g.bottomN && !state.busy;
       } else {
         hint.textContent = '庄家正在扣底…';
@@ -351,9 +353,12 @@
         if (g.lead) {
           hint.textContent = '轮到你跟牌：需要出 ' + g.lead.cards.length + ' 张' +
             (g.lead.cards.length > 1 ? '（对子/三条/四条/同型链要跟足）' : '') +
-            '；右键可选该花色右侧全部牌';
+            '；按住拖动连选，双击直接出牌';
+          label = '出牌 ' + sel + '/' + g.lead.cards.length;
         } else {
-          hint.textContent = '轮到你首出：单张 / 对子 / 三条 / 四条 / 拖拉机 / 推土机 / 甩牌；右键选该花色右侧全部牌';
+          hint.textContent = '轮到你首出：单张 / 对子 / 三条 / 四条 / 拖拉机 / 推土机 / 甩牌；' +
+            '按住拖动连选，右键选该花色右侧全部，双击出单张';
+          label = sel ? '出牌 ' + sel : '出牌';
         }
         canPlay = sel > 0 && !state.busy;
       } else {
@@ -847,19 +852,121 @@
   });
   $('#btnHint').addEventListener('click', hint);
 
-  $('#handCards').addEventListener('click', function (ev) {
-    var el = ev.target.closest('.hand-card');
-    if (!el) return;
+  // 现在能不能选牌
+  function canSelect() {
     var g = state.game;
-    if (!g || state.busy) return;
-    if (state.mode === 'play' && g.turn !== 0) return;
-    if (state.mode !== 'play' && state.mode !== 'bury') return;
+    if (!g || state.busy) return false;
+    if (state.mode === 'play' && g.turn !== 0) return false;
+    return state.mode === 'play' || state.mode === 'bury';
+  }
+
+  // 只改这一张牌的 DOM，不整手重绘：点击立刻见效，鼠标悬停也不会丢
+  function paintCard(el, on, quiet) {
     var idx = Number(el.getAttribute('data-idx'));
-    if (state.selected.has(idx)) state.selected.delete(idx);
-    else state.selected.add(idx);
-    sfx('click');
+    var has = state.selected.has(idx);
+    if (on === has) return;
+    if (on) state.selected.add(idx); else state.selected.delete(idx);
+    el.classList.toggle('selected', on);
+    if (!quiet) sfx('click');
+    renderControls();
+  }
+
+  var dragSel = null; // { mode: 选还是取消, seen: 拖过的牌, row: 起始行 }
+  var lastTap = { idx: -1, t: 0 }; // 双击检测：同一张牌 350ms 内点两次
+
+  // 快出：按需要的张数选中同点数的牌，合法就直接打出去
+  function quickPlay(idx) {
+    var g = state.game;
+    if (!g || idx < 0 || idx >= g.hands[0].length) return;
+    var card = g.hands[0][idx];
+    var need = state.mode === 'bury' ? g.bottomN : (g.lead ? g.lead.cards.length : 1);
+    var want = Math.max(1, Math.min(need, 4));
+    var pick = [];
+    for (var i = 0; i < g.hands[0].length && pick.length < want; i++) {
+      if (g.hands[0][i] === card) pick.push(i);
+    }
+    state.selected = new Set(pick);
     renderHand();
     renderControls();
+    if (state.mode !== 'play' || g.turn !== 0 || state.busy) return;
+    var cards = pick.map(function (k) { return g.hands[0][k]; });
+    var ok = cards.length === 1 ? true
+           : (g.lead ? E.validateFollow(g.hands[0], cards, g.lead, ctxForDisplay()).ok : false);
+    if (ok) safePlay();
+  }
+
+  // 同一张牌短时间点两下 = 双击
+  function isDoubleTap(idx) {
+    var now = Date.now();
+    var hit = lastTap.idx === idx && now - lastTap.t < 350;
+    lastTap = hit ? { idx: -1, t: 0 } : { idx: idx, t: now };
+    return hit;
+  }
+
+  // 按下：单击切换选中，短时间连点两下快出
+  function beginPick(el, ev) {
+    if (ev.button) return; // 只处理左键
+    if (!el || !canSelect()) return;
+    var idx = Number(el.getAttribute('data-idx'));
+    state.suppressClick = true;
+    if (isDoubleTap(idx)) { quickPlay(idx); return; }
+    dragSel = { mode: !state.selected.has(idx), seen: {}, row: el.closest('.hand-row') };
+    dragSel.seen[idx] = 1;
+    paintCard(el, dragSel.mode);
+  }
+
+  // 按住拖动 = 连选：同一行里拖过的牌统一按第一张的方向选中/取消
+  function dragOver(x, y) {
+    if (!dragSel) return;
+    var el = document.elementFromPoint(x, y);
+    var card = el && el.closest ? el.closest('.hand-card') : null;
+    if (!card) return;
+    if (dragSel.row && card.closest('.hand-row') !== dragSel.row) return;
+    var idx = Number(card.getAttribute('data-idx'));
+    if (dragSel.seen[idx]) return;
+    dragSel.seen[idx] = 1;
+    paintCard(card, dragSel.mode, true);
+  }
+
+  // 优先用 pointer 事件；浏览器不支持（或跑在不发 pointer 的环境里）时退回鼠标事件
+  var usingPointer = false;
+
+  function cardAt(ev) {
+    return ev.target && ev.target.closest ? ev.target.closest('.hand-card') : null;
+  }
+
+  $('#handCards').addEventListener('pointerdown', function (ev) {
+    usingPointer = true;
+    beginPick(cardAt(ev), ev);
+  });
+  document.addEventListener('pointermove', function (ev) {
+    if (usingPointer) dragOver(ev.clientX, ev.clientY);
+  });
+  document.addEventListener('pointerup', function () {
+    if (usingPointer) dragSel = null;
+  });
+
+  $('#handCards').addEventListener('mousedown', function (ev) {
+    if (usingPointer) return; // pointer 事件已处理过，避免重复切换
+    beginPick(cardAt(ev), ev);
+  });
+  document.addEventListener('mousemove', function (ev) {
+    if (usingPointer) return;
+    dragOver(ev.clientX, ev.clientY);
+  });
+  document.addEventListener('mouseup', function () {
+    if (!usingPointer) dragSel = null;
+  });
+
+  // 单击兜底（脚本触发、没有 pointer/mouse 事件的场景）
+  $('#handCards').addEventListener('click', function (ev) {
+    var el = cardAt(ev);
+    if (!el) return;
+    if (state.suppressClick) { state.suppressClick = false; return; }
+    if (!canSelect()) return;
+    var idx = Number(el.getAttribute('data-idx'));
+    if (isDoubleTap(idx)) { quickPlay(idx); return; }
+    paintCard(el, !state.selected.has(idx));
   });
 
   // 右键：把这张牌和同花色右侧（更小）的牌整段选中；这一段已全选时再次右键整段取消
@@ -867,10 +974,7 @@
     var el = ev.target.closest('.hand-card');
     if (!el) return;
     ev.preventDefault();
-    var g = state.game;
-    if (!g || state.busy) return;
-    if (state.mode === 'play' && g.turn !== 0) return;
-    if (state.mode !== 'play' && state.mode !== 'bury') return;
+    if (!canSelect()) return;
     var idx = Number(el.getAttribute('data-idx'));
     var ctx = ctxForDisplay();
     var entries = sortedHand();
